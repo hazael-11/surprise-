@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galaksi ASCII</title>
+<style>
+  html,body{margin:0;height:100%;background:#02030a;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Animasi galaksi dari karakter ASCII"></canvas>
+<script>
+// Tulisan kecil di bagian bawah (kosongkan "" kalau tidak mau). Hanya karakter ASCII.
+const CAPTION = "";
+
+const RAMP = " .,:;-=+*#%@", SPH = " .:-=+*#%@";
+const CH = [], PAL = [];
+const chr = c => CH[c] || (CH[c] = String.fromCharCode(c));
+const pal = k => PAL[k] || (PAL[k] = `rgb(${((k>>8)&15)*17},${((k>>4)&15)*17},${(k&15)*17})`);
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+
+/* ---------- noise ---------- */
+function hash(x, y) { let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y); let fx = x - xi, fy = y - yi;
+  fx = fx*fx*(3-2*fx); fy = fy*fy*(3-2*fy);
+  const a = hash(xi,yi), b = hash(xi+1,yi), c = hash(xi,yi+1), d = hash(xi+1,yi+1);
+  return a + (b-a)*fx + (c-a)*fy + (a-b-c+d)*fx*fy;
+}
+const fbm = (x, y) => .55*vnoise(x,y) + .3*vnoise(x*2+5.2,y*2+1.3) + .15*vnoise(x*4+9.1,y*4+3.7);
+
+/* ---------- grid ---------- */
+let W,H,S,DPR,fs,cw,ch,cols,rows,N, lum,cr,cg,cb, ov,ovc;
+function setup() {
+  DPR = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; S = Math.min(W, H);
+  cv.width = W*DPR; cv.height = H*DPR;
+  fs = Math.max(8, Math.min(16, Math.sqrt(W*H/(.69*11000))));
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.font = fs + 'px "Courier New",ui-monospace,monospace'; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  cw = ctx.measureText("M").width; ch = fs*1.15;
+  cols = Math.ceil(W/cw); rows = Math.ceil(H/ch); N = cols*rows;
+  lum = new Float32Array(N); cr = new Float32Array(N); cg = new Float32Array(N); cb = new Float32Array(N);
+  ov = new Uint8Array(N); ovc = new Uint8ClampedArray(N*3);
+}
+const add = (i,l,r,g,b) => { lum[i]+=l; cr[i]+=l*r; cg[i]+=l*g; cb[i]+=l*b; };
+const set = (i,code,r,g,b) => { ov[i]=code; ovc[i*3]=r; ovc[i*3+1]=g; ovc[i*3+2]=b; };
+const cellOf = (px,py) => { const c=(px/cw)|0, r=(py/ch)|0; return (px<0||py<0||c>=cols||r>=rows) ? -1 : r*cols+c; };
+
+/* ---------- data ---------- */
+const TA = -0.45, FLAT = .55;
+const STAR_COL = [[255,255,255],[190,210,255],[255,240,200],[255,200,220]];
+const stars = Array.from({length: 560}, () => {
+  const k = Math.random();
+  return { x: Math.random(), y: Math.random(), type: k<.84?0:k<.97?1:2, ph: Math.random()*6.28, sp: .8+Math.random()*2.5,
+           col: STAR_COL[(Math.random()*4)|0], c: ".,'"[(Math.random()*3)|0] };
+});
+const rocks = Array.from({length: 190}, () => ({ a: Math.random()*6.28, rad: .72 + Math.random()*.1, sp: .22+Math.random()*.08, c: ".,o:"[(Math.random()*4)|0], b: .5+Math.random()*.5 }));
+const meteors = [];
+const PL = {
+  ice:   { type:3, rot:.25 },
+  earth: { type:1, rot:.3 },
+  mars:  { type:2, rot:.2, c1:[215,100,55], c2:[120,55,40] },
+  lava:  { type:2, rot:.35, c1:[255,150,40], c2:[110,25,10] },
+  gas:   { type:0, rot:.18 },
+  moon:  { type:4, rot:.1 }
+};
+
+/* ---------- shading ---------- */
+const LX=-.62, LY=-.5, LZ=.6;
+let SR,SG,SB,SL;
+function shade(dx, dy, P, t) {
+  const d2 = dx*dx+dy*dy, nz = Math.sqrt(Math.max(0,1-d2));
+  let diff = dx*LX+dy*LY+nz*LZ; if (diff<0) diff=0;
+  const lon = Math.atan2(dx,nz)+t*P.rot, u = Math.cos(lon), v = Math.sin(lon);
+  let r,g,b,tx=.7,rim=0;
+  switch (P.type) {
+    case 0: { const bd=.5+.5*Math.sin(dy*12+2.2*vnoise(u*2+dy*2,v*2+5)); r=240-60*bd; g=215-90*bd; b=160-80*bd; tx=.7+.3*bd; break; }
+    case 1: {
+      const n = fbm(u*2.4+dy*1.1+3, v*2.4-dy*.8+7);
+      if (n>.52) { const k=(n-.52)*4; r=70+110*k; g=150-40*k; b=70-10*k; tx=.8; } else { r=25; g=85+30*n; b=200; tx=.55; }
+      if (Math.abs(dy) > .8+.1*vnoise(u*3,v*3)) { r=g=b=240; tx=.9; }
+      const l2=lon+t*.12, cl=fbm(Math.cos(l2)*3.1+dy*2+11, Math.sin(l2)*3.1+2);
+      if (cl>.58) { const k=Math.min(1,(cl-.58)*5)*.7; r+=(245-r)*k; g+=(245-g)*k; b+=(250-b)*k; tx=Math.max(tx,.85); }
+      rim = Math.pow(1-nz,2.6); break; }
+    case 2: { const n=fbm(u*3+dy*1.2,v*3); r=P.c1[0]+(P.c2[0]-P.c1[0])*n; g=P.c1[1]+(P.c2[1]-P.c1[1])*n; b=P.c1[2]+(P.c2[2]-P.c1[2])*n; tx=.45+.7*n; break; }
+    case 3: { const bd=.5+.5*Math.sin(dy*7+1.6*vnoise(u*1.6+dy,v*1.6)); r=130-40*bd; g=215-50*bd; b=240-10*bd; tx=.75+.25*bd; rim=Math.pow(1-nz,2.6)*.8; break; }
+    default: { const n=fbm(u*6+dy*2,v*6), k=n<.4?.55:1; r=g=b=190*k; tx=.6+.5*n*k; }
+  }
+  let l = .09+diff*.95*tx;
+  if (rim>0) { l += rim*.4*(.3+.7*diff); const m=Math.min(1,rim*.9)*.5; r+=(130-r)*m; g+=(190-g)*m; b+=(255-b)*m; }
+  if (l>1) l=1; SL=l; const f=.2+.8*Math.min(1,l*1.1); SR=r*f; SG=g*f; SB=b*f;
+}
+function putSphere(i, dx, dy, P, t) {
+  shade(dx,dy,P,t); const idx = Math.max(1, Math.min(9, (SL*10)|0));
+  set(i, SPH.charCodeAt(idx), SR, SG, SB);
+}
+function sphere(cx, cy, R, P, t) {
+  const c0=Math.max(0,((cx-R)/cw)|0), c1=Math.min(cols-1,Math.ceil((cx+R)/cw));
+  const r0=Math.max(0,((cy-R)/ch)|0), r1=Math.min(rows-1,Math.ceil((cy+R)/ch));
+  for (let r=r0;r<=r1;r++) for (let c=c0;c<=c1;c++) {
+    const dx=((c+.5)*cw-cx)/R, dy=((r+.5)*ch-cy)/R;
+    if (dx*dx+dy*dy<=1) putSphere(r*cols+c, dx, dy, P, t);
+  }
+}
+function ringedPlanet(cx, cy, R, t) {
+  const ang=-.38, cA=Math.cos(ang), sA=Math.sin(ang), tilt=.3, ext=R*2.2;
+  const c0=Math.max(0,((cx-ext)/cw)|0), c1=Math.min(cols-1,Math.ceil((cx+ext)/cw));
+  const r0=Math.max(0,((cy-ext)/ch)|0), r1=Math.min(rows-1,Math.ceil((cy+ext)/ch));
+  for (let r=r0;r<=r1;r++) for (let c=c0;c<=c1;c++) {
+    const dx=(c+.5)*cw-cx, dy=(r+.5)*ch-cy, i=r*cols+c;
+    const rx=dx*cA+dy*sA, ry=(-dx*sA+dy*cA)/tilt, rd=Math.hypot(rx,ry)/R;
+    const inRing = rd>1.38 && rd<2.1 && !(rd>1.78 && rd<1.86);
+    const nx=dx/R, ny=dy/R, inS = nx*nx+ny*ny<=1;
+    const ringCell = () => {
+      const s=(rd-1.38)/.72, band=.55+.45*Math.sin(s*46+vnoise(s*9,0)*3), l=.3+.6*band, f=.45+.55*band;
+      set(i, SPH.charCodeAt(Math.max(1,Math.min(9,(l*10)|0))), 225*f, 200*f, 160*f);
+    };
+    if (inRing && ry>0) ringCell();
+    else if (inS) putSphere(i, nx, ny, PL.gas, t);
+    else if (inRing) ringCell();
+  }
+}
+
+/* ---------- layers ---------- */
+function background(t) {
+  const gx=W*.5, gy=H*.5, R=S*.62, cT=Math.cos(TA), sT=Math.sin(TA), nsc=S*.35;
+  for (let r=0;r<rows;r++) { const py=(r+.5)*ch;
+    for (let c=0;c<cols;c++) { const px=(c+.5)*cw, i=r*cols+c;
+      let nl = (fbm(px/nsc+t*.015, py/nsc-t*.01)-.48)*1.1;
+      if (nl>0) { const n2=vnoise(px/(nsc*1.7)+20, py/(nsc*1.7)+t*.01); add(i, Math.min(.38,nl), 50+160*n2, 110-50*n2, 230-60*n2); }
+      const dx=px-gx, dy=py-gy, xr=dx*cT+dy*sT, yr=(-dx*sT+dy*cT)/FLAT, rr=Math.hypot(xr,yr)/R;
+      if (rr<1.35) {
+        const th=Math.atan2(yr,xr)-t*.15, a=Math.cos(2*(th-3.2*Math.log(rr+.09))), arm=Math.pow(.5+.5*a,2.2);
+        const nz=vnoise(rr*Math.cos(th)*34+50, rr*Math.sin(th)*34+50);
+        const l=(Math.exp(-rr*2.9)*(.22+1.05*arm)*(.55+.9*nz)+1.7*Math.exp(-rr*12))*.95;
+        if (l>.03) {
+          const k=Math.min(1,Math.exp(-rr*7)*1.3), r0=110+125*nz, g0=150-30*nz, b0=255-40*nz;
+          add(i, l, r0+(255-r0)*k, g0+(225-g0)*k, b0+(170-b0)*k);
+        }
+      }
+    }
+  }
+}
+function belt(t) {
+  const gx=W*.5, gy=H*.5, R=S*.62, cT=Math.cos(TA), sT=Math.sin(TA);
+  for (const k of rocks) {
+    const a=k.a+t*k.sp, xr=k.rad*R*Math.cos(a), yp=k.rad*R*FLAT*Math.sin(a);
+    const i=cellOf(gx+xr*cT-yp*sT, gy+xr*sT+yp*cT); if (i<0) continue;
+    const f=k.b*(.7+.3*Math.sin(a)); set(i, k.c.charCodeAt(0), 190*f, 165*f, 140*f);
+  }
+}
+function starfield(t) {
+  for (const s of stars) {
+    const px=s.x*W, py=s.y*H, i=cellOf(px,py); if (i<0) continue;
+    if (s.type===0 && lum[i]>.7) continue;
+    const b=.3+.7*(.5+.5*Math.sin(t*s.sp+s.ph)), [r,g,bl]=s.col;
+    if (s.type===0) set(i, s.c.charCodeAt(0), r*b, g*b, bl*b);
+    else {
+      set(i, s.type===1 ? 43 : 42, r*b, g*b, bl*b);
+      if (s.type===2) { const o=[[1,0,45],[-1,0,45],[0,1,124],[0,-1,124]];
+        for (const [ox,oy,code] of o) { const j=cellOf(px+ox*cw, py+oy*ch); if (j>=0) set(j, code, r*b*.6, g*b*.6, bl*b*.6); } }
+    }
+  }
+}
+function sun(t) {
+  const sx=W*.055, sy=H*.095, Rs=S*.055, ext=Rs*5;
+  const c0=Math.max(0,((sx-ext)/cw)|0), c1=Math.min(cols-1,Math.ceil((sx+ext)/cw));
+  const r0=Math.max(0,((sy-ext)/ch)|0), r1=Math.min(rows-1,Math.ceil((sy+ext)/ch));
+  for (let r=r0;r<=r1;r++) for (let c=c0;c<=c1;c++) {
+    const px=(c+.5)*cw, py=(r+.5)*ch, i=r*cols+c, d=Math.hypot(px-sx,py-sy)/Rs;
+    if (d<1) { const g=fbm(px/(Rs*.35)+t*.3, py/(Rs*.35)-t*.2), code=g>.6?64:g>.45?37:g>.3?35:42; set(i, code, 255, 215+30*g, 140+60*g); }
+    else { const th=Math.atan2(py-sy,px-sx), ray=.75+.25*Math.sin(th*8+t*1.2)*Math.sin(th*3-t*.7), l=Math.exp(-(d-1)*.95)*.95*ray; if (l>.04) add(i, l, 255, 170, 70); }
+  }
+}
+function comet(t) {
+  const per=18, a=(((t+4)%per)/per)/.6; if (a>1) return;
+  const x0=W*1.1, y0=-H*.1, x1=-W*.1, y1=H*.75, dx=x1-x0, dy=y1-y0, len=Math.hypot(dx,dy), ux=dx/len, uy=dy/len;
+  const hx=x0+dx*a, hy=y0+dy*a;
+  for (let k=0;k<34;k++) {
+    const j=(vnoise(k*.9,t*.6)-.5)*k*1.2, i=cellOf(hx-ux*k*cw*1.4-uy*j, hy-uy*k*cw*1.4+ux*j); if (i<0) continue;
+    const b=1-k/34, code = k===0?64:k<4?42:k<12?58:46;
+    set(i, code, 200*b+30, 235*b+15, 255*b);
+  }
+}
+function meteorLayer(dt) {
+  if (Math.random() < dt/1.7) meteors.push({ x: W*(.3+Math.random()*.8), y: -10, vx: -(250+Math.random()*250), vy: 120+Math.random()*150 });
+  for (let n=meteors.length-1;n>=0;n--) {
+    const m=meteors[n]; m.x+=m.vx*dt; m.y+=m.vy*dt;
+    if (m.x<-80 || m.y>H+80) { meteors.splice(n,1); continue; }
+    const code = m.vx*m.vy<0 ? 47 : 92;
+    for (let k=0;k<12;k++) { const i=cellOf(m.x-m.vx*k*.012, m.y-m.vy*k*.012); if (i<0) continue; const b=1-k/12; set(i, k===0?42:code, 255*b, 255*b, 255*b); }
+  }
+}
+const UFO = ["    _.-._    ", " .-'  o  '-. ", "'-(_)-(_)-(_)-'"];
+function ufo(t) {
+  const cx=(W*(.5+.4*Math.sin(t*.15)))/cw, cy=(H*(.88+.03*Math.sin(t*.7)))/ch;
+  UFO.forEach((line,ri) => { const r=Math.round(cy)+ri-1, c0=Math.round(cx)-(line.length>>1);
+    for (let k=0;k<line.length;k++) { const ch2=line[k]; if (ch2===" ") continue; const c=c0+k; if (c<0||c>=cols||r<0||r>=rows) continue;
+      const blink = ri===2 && ch2==="_" && ((t*3|0)+k)%3===0;
+      set(r*cols+c, ch2.charCodeAt(0), blink?80:170, blink?255:190, blink?120:200); } });
+}
+function caption() {
+  if (!CAPTION) return; const r=rows-2, c0=Math.floor((cols-CAPTION.length)/2);
+  for (let k=0;k<CAPTION.length;k++) { const c=c0+k; if (c>=0&&c<cols&&CAPTION[k]!==" ") set(r*cols+c, CAPTION.charCodeAt(k)&127, 255, 224, 130); }
+}
+
+/* ---------- loop ---------- */
+function frame(t, dt) {
+  lum.fill(0); cr.fill(0); cg.fill(0); cb.fill(0); ov.fill(0);
+  background(t); belt(t); starfield(t); sun(t);
+  sphere(W*.36, H*.16, S*.05, PL.ice, t);
+  const ex=W*.8, ey=H*.3, er=S*.07, ma=t*.55, mr=Math.max(S*.022, ch*1.3);
+  const mx=ex+Math.cos(ma)*S*.14, my=ey+Math.sin(ma)*S*.04, front=Math.sin(ma)>0;
+  if (!front) sphere(mx,my,mr,PL.moon,t);
+  sphere(ex,ey,er,PL.earth,t);
+  if (front) sphere(mx,my,mr,PL.moon,t);
+  sphere(W*.6, H*.8, S*.04, PL.mars, t);
+  sphere(W*.9, H*.76, S*.032, PL.lava, t);
+  ringedPlanet(W*.2, H*.7, S*.095, t);
+  comet(t); meteorLayer(dt); ufo(t); caption();
+
+  ctx.fillStyle = "#02030a"; ctx.fillRect(0,0,W,H);
+  let lastKey = -1;
+  for (let r=0;r<rows;r++) { const y=(r+.5)*ch;
+    for (let c=0;c<cols;c++) { const i=r*cols+c; let code=ov[i], R,G,B;
+      if (code) { R=ovc[i*3]; G=ovc[i*3+1]; B=ovc[i*3+2]; }
+      else { const l=lum[i]; if (l<.08) continue; const idx=Math.min(11,(l*12)|0); if (idx<1) continue;
+        code=RAMP.charCodeAt(idx); const f=(.3+.7*Math.min(1,l))/l; R=cr[i]*f; G=cg[i]*f; B=cb[i]*f; }
+      const key=((Math.min(255,R)>>4)<<8)|((Math.min(255,G)>>4)<<4)|(Math.min(255,B)>>4);
+      if (key!==lastKey) { ctx.fillStyle=pal(key); lastKey=key; }
+      ctx.fillText(chr(code), (c+.5)*cw, y);
+    }
+  }
+}
+const speed = matchMedia("(prefers-reduced-motion: reduce)").matches ? .25 : 1;
+let t0 = performance.now(), tPrev = t0, lastDraw = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (now-lastDraw < 30) return;
+  const dt = Math.min(.1, (now-tPrev)/1000)*speed; tPrev = now; lastDraw = now;
+  frame((now-t0)/1000*speed, dt);
+}
+addEventListener("resize", setup);
+addEventListener("pointerdown", e => { for (let k=0;k<3;k++) meteors.push({ x: e.clientX+k*30, y: e.clientY-k*20, vx: -(300+Math.random()*200), vy: 150+Math.random()*100 }); });
+setup(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
